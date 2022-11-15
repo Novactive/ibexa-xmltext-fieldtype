@@ -259,9 +259,9 @@ class RichText implements Converter
      */
     private function addXhtmlClassValue(DOMNode $node, $value)
     {
-        $classAttributes = $node->attributes->getNamedItemNS('http://ez.no/xmlns/ezpublish/docbook/xhtml', 'class');
+        $classAttributes = $node->attributes->getNamedItemNS('http://ibexa.co/xmlns/dxp/docbook/xhtml', 'class');
         if ($classAttributes == null) {
-            $class = 'ez-embed-type-image';
+            $class = 'ibexa-embed-type-image';
 
             $isLinked = $node->lastChild->nodeName === 'ezlink';
             $class .= $isLinked ? ' is-linked' : '';
@@ -290,7 +290,7 @@ class RichText implements Converter
      */
     private function removeXhtmlClassValue(DOMNode $node, $value)
     {
-        $classAttributes = $node->attributes->getNamedItemNS('http://ez.no/xmlns/ezpublish/docbook/xhtml', 'class');
+        $classAttributes = $node->attributes->getNamedItemNS('http://ibexa.co/xmlns/dxp/docbook/xhtml', 'class');
         if ($classAttributes == null) {
             return false;
         }
@@ -316,7 +316,7 @@ class RichText implements Converter
     }
 
     /**
-     * Embedded images needs to include an attribute (ezxhtml:class="ez-embed-type-image) in order to be recognized by editor.
+     * Embedded images needs to include an attribute (ezxhtml:class="ibexa-embed-type-image) in order to be recognized by editor.
      *
      * Before calling this function, make sure you are logged in as admin, or at least have access to all the objects
      * being embedded in the $richtextDocument.
@@ -339,11 +339,11 @@ class RichText implements Converter
             $id = (int) substr($href, strrpos($href, '/') + 1);
             $isImage = $this->isImageContentType($id, $isContentId, $contentFieldId);
             if ($isImage) {
-                if ($this->addXhtmlClassValue($node, 'ez-embed-type-image')) {
+                if ($this->addXhtmlClassValue($node, 'ibexa-embed-type-image')) {
                     ++$count;
                 }
             } else {
-                if ($this->removeXhtmlClassValue($node, 'ez-embed-type-image')) {
+                if ($this->removeXhtmlClassValue($node, 'ibexa-embed-type-image')) {
                     ++$count;
                 }
             }
@@ -641,9 +641,11 @@ class RichText implements Converter
             $result = $convertedDocumentNormalized->saveXML();
 
             if (!empty($errors)) {
-                $this->log(LogLevel::ERROR,
-                    "Validation errors when converting ezxmltext for contentobject_attribute.id=$contentFieldId",
-                    ['result' => $result, 'errors' => $errors, 'xmlString' => $inputDocument->saveXML()]
+                throw new ConvertionException(
+                    $result,
+                    $errors,
+                    $inputDocument,
+                    $contentFieldId
                 );
             }
         }
