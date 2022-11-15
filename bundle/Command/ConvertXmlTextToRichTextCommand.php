@@ -9,6 +9,7 @@ namespace EzSystems\EzPlatformXmlTextFieldTypeBundle\Command;
 use Doctrine\DBAL\FetchMode;
 use DOMDocument;
 use ErrorException;
+use eZ\Publish\Core\FieldType\XmlText\Converter\ConvertionException;
 use Ibexa\Contracts\Core\Repository\Repository;
 use eZ\Publish\Core\FieldType\XmlText\Converter\RichText as RichTextConverter;
 use eZ\Publish\Core\FieldType\XmlText\Persistence\Legacy\ContentModelGateway as Gateway;
@@ -195,6 +196,13 @@ EOT
                 InputOption::VALUE_OPTIONAL,
                 'eZ Platform username (with Role containing at least Content policies: read, versionread)',
                 self::DEFAULT_REPOSITORY_USER
+            )
+            ->addOption(
+                'content-type-ids',
+                null,
+                InputOption::VALUE_OPTIONAL|InputOption::VALUE_IS_ARRAY,
+                'Content type on which to execute the migration',
+                []
             );
     }
 
@@ -223,16 +231,17 @@ EOT
             return 0;
         }
 
+        $contentTypeIds = $input->getOption('content-type-ids');
         if ($testContentId === null) {
-            $this->convertFieldDefinitions($dryRun, $output);
+            $this->convertFieldDefinitions($dryRun, $contentTypeIds,$output);
         } else {
             $dryRun = true;
-            $this->convertFields($dryRun, $testContentId, !$input->getOption('disable-duplicate-id-check'), !$input->getOption('disable-id-value-check'), null, null);
+            $this->convertFields($dryRun, $testContentId, $contentTypeIds, !$input->getOption('disable-duplicate-id-check'), !$input->getOption('disable-id-value-check'), null, null);
 
             return 0;
         }
 
-        $this->processFields($dryRun, !$input->getOption('disable-duplicate-id-check'), !$input->getOption('disable-id-value-check'), $output);
+        $this->processFields($dryRun, $contentTypeIds,!$input->getOption('disable-duplicate-id-check'), !$input->getOption('disable-id-value-check'), $output);
         $this->reportCustomTags($input, $output);
         $this->removeCustomTagLog();
 
@@ -467,12 +476,12 @@ EOT
         $output->writeln(PHP_EOL . 'Updated ezembed tags in $totalCount field(s)');
     }
 
-    protected function convertFieldDefinitions($dryRun, $output)
+    protected function convertFieldDefinitions($dryRun, array $contentTypeIds, $output)
     {
-        $count = $this->gateway->countContentTypeFieldsByFieldType('ezxmltext');
+        $count = $this->gateway->countContentTypeFieldsByFieldType('ezxmltext', $contentTypeIds);
         $output->writeln("Found $count field definiton to convert.");
 
-        $updateQuery = $this->gateway->getContentTypeFieldTypeUpdateQuery('ezxmltext', 'ezrichtext');
+        $updateQuery = $this->gateway->getContentTypeFieldTypeUpdateQuery('ezxmltext', 'ezrichtext', $contentTypeIds);
         if (!$dryRun) {
             $updateQuery->execute();
         }
@@ -528,7 +537,7 @@ EOT
         return;
     }
 
-    private function createChildProcess($dryRun, $checkDuplicateIds, $checkIdValues, $offset, $limit, OutputInterface $output)
+    private function createChildProcess($dryRun, array $contentTypeIds, $checkDuplicateIds, $checkIdValues, $offset, $limit, OutputInterface $output)
     {
         $arguments = [
             file_exists('bin/console') ? 'bin/console' : 'app/console',
@@ -538,6 +547,7 @@ EOT
             '--image-content-types=' . implode(',', $this->imageContentTypeIdentifiers),
             "--user=$this->userLogin",
             '--export-dir-filter=' . implode(',', $this->exportDirFilter),
+            '--content-type-ids=' . implode(',', $contentTypeIds),
         ];
 
         $memoryLimit = ini_get('memory_limit');
@@ -622,9 +632,9 @@ EOT
         }
     }
 
-    protected function convertFields($dryRun, $contentId, $checkDuplicateIds, $checkIdValues, $offset, $limit)
+    protected function convertFields($dryRun, $contentId, array $contentTypeIds, $checkDuplicateIds, $checkIdValues, $offset, $limit)
     {
-        $statement = $this->gateway->getFieldRows(['ezxmltext', 'ezrichtext'], $contentId, $offset, $limit);
+        $statement = $this->gateway->getFieldRows(['ezxmltext', 'ezrichtext'], $contentId, $contentTypeIds, $offset, $limit);
         while ($row = $statement->fetch(FetchMode::ASSOCIATIVE)) {
             if ($row['data_type_string'] === 'ezrichtext') {
                 continue;
@@ -645,7 +655,16 @@ EOT
                     ]
                 );
             }
-            $converted = $this->converter->convert($xmlDoc, $checkDuplicateIds, $checkIdValues, $row['id']);
+            try
+            {
+                $converted = $this->converter->convert($xmlDoc, $checkDuplicateIds, $checkIdValues, $row['id']);
+            }catch (ConvertionException $exception) {
+                dump($row['contentobject_id'], $row['id'], $row['version']);
+                $this->logger->error(
+                           "Validation errors when converting ezxmltext for contentobject_attribute.id=$exception->contentFieldId",
+                           ['result' => $exception->result, 'errors' => $exception->errors, 'xmlString' => $exception->inputDocument->saveXML()]
+                );
+            }
             $this->dumpOnErrors($this->converter->getErrors(), $row['data_text'], $row['contentobject_id'], $row['id'], $row['version'], $row['language_code']);
 
             $this->updateFieldRow($dryRun, $row['id'], $row['version'], $converted);
@@ -657,6 +676,7 @@ EOT
                     'converted' => $converted,
                 ]
             );
+            $this->progressBarAdvance(1);
         }
         $this->writeCustomTagLog();
     }
@@ -684,13 +704,13 @@ EOT
         }
     }
 
-    protected function processFields($dryRun, $checkDuplicateIds, $checkIdValues, OutputInterface $output)
+    protected function processFields($dryRun, $contentTypeIds, $checkDuplicateIds, $checkIdValues, OutputInterface $output)
     {
         $output->write('Finding total number of ezxmltext attributes to convert...');
-        $ezxmltextCount = $this->gateway->getRowCountOfContentObjectAttributes('ezxmltext', null);
+        $ezxmltextCount = $this->gateway->getRowCountOfContentObjectAttributes('ezxmltext', null, $contentTypeIds);
         $output->writeln(" Found $ezxmltextCount");
         $output->write('Finding total number of ezxmltext and ezrichtext attributes...');
-        $count = $this->gateway->getRowCountOfContentObjectAttributes(['ezxmltext', 'ezrichtext'], null);
+        $count = $this->gateway->getRowCountOfContentObjectAttributes(['ezxmltext', 'ezrichtext'], null, $contentTypeIds);
         $output->writeln(" Found $count");
 
         if ($count < self::MAX_OBJECTS_PER_CHILD * $this->maxConcurrency && $this->maxConcurrency > 1) {
@@ -710,10 +730,10 @@ EOT
                 if (!$processSlotAvailable) {
                     $this->progressBarAdvance($objectsPerChild);
                 }
-                $process = $this->createChildProcess($dryRun, $checkDuplicateIds, $checkIdValues, $offset, $limit, $output);
+                $process = $this->createChildProcess($dryRun, $contentTypeIds, $checkDuplicateIds, $checkIdValues, $offset, $limit, $output);
                 $this->processes[$process->getPid()] = ['offset' => $offset, 'limit' => $limit, 'process' => $process];
             } else {
-                $this->convertFields($dryRun, null, $checkDuplicateIds, $checkIdValues, $offset, $limit);
+                $this->convertFields($dryRun, null, $contentTypeIds, $checkDuplicateIds, $checkIdValues, $offset, $limit);
             }
             $offset += $objectsPerChild;
         } while ($offset <= $count);

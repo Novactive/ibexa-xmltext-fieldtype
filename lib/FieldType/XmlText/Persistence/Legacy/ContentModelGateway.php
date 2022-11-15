@@ -50,9 +50,10 @@ class ContentModelGateway
      * @param string $fieldTypeIdentifier
      * @return int
      */
-    public function countContentTypeFieldsByFieldType($fieldTypeIdentifier)
+    public function countContentTypeFieldsByFieldType(string $fieldTypeIdentifier, array $contentTypeIds = [])
     {
         $query = $this->dbal->createQueryBuilder();
+
         $query->select('count(a.id)')
             ->from('ezcontentclass_attribute', 'a')
             ->where(
@@ -62,6 +63,17 @@ class ContentModelGateway
                 )
             )
             ->setParameter(':datatypestring', $fieldTypeIdentifier);
+
+        if(!empty($contentTypeIds)){
+            $where = $query->andWhere(
+                $query->expr()->in(
+                    'a.contentclass_id',
+                    ':contentclassids'
+                )
+            );
+            $query->setParameter(':contentclassids', $contentTypeIds, Connection::PARAM_INT_ARRAY);
+        }
+
         $statement = $query->execute();
 
         return (int) $statement->fetchColumn();
@@ -72,9 +84,10 @@ class ContentModelGateway
      * @param string $toFieldTypeIdentifier
      * @return \Doctrine\DBAL\Query\QueryBuilder
      */
-    public function getContentTypeFieldTypeUpdateQuery($fromFieldTypeIdentifier, $toFieldTypeIdentifier)
+    public function getContentTypeFieldTypeUpdateQuery($fromFieldTypeIdentifier, $toFieldTypeIdentifier, array $contentTypeIds = [])
     {
         $updateQuery = $this->dbal->createQueryBuilder();
+
         $updateQuery->update('ezcontentclass_attribute')
             ->set('data_type_string', ':newdatatypestring')
             // was tagPreset in ezxmltext, unused in RichText
@@ -91,6 +104,16 @@ class ContentModelGateway
                 ':datatext2' => null,
             ]);
 
+        if(!empty($contentTypeIds)){
+            $where = $updateQuery->andWhere(
+                $updateQuery->expr()->in(
+                    'contentclass_id',
+                    ':contentclassids'
+                )
+            );
+            $updateQuery->setParameter(':contentclassids', $contentTypeIds, Connection::PARAM_INT_ARRAY);
+        }
+
         return $updateQuery;
     }
 
@@ -99,13 +122,14 @@ class ContentModelGateway
      * @param int $contentId
      * @return int
      */
-    public function getRowCountOfContentObjectAttributes($datatypes, $contentId)
+    public function getRowCountOfContentObjectAttributes($datatypes, $contentId, array $contentTypeIds)
     {
         if (!\is_array($datatypes)) {
             $datatypes = [$datatypes];
         }
 
         $query = $this->dbal->createQueryBuilder();
+
         $query->select('count(a.id)')
             ->from('ezcontentobject_attribute', 'a')
             ->where(
@@ -114,6 +138,17 @@ class ContentModelGateway
                     $query->createNamedParameter($datatypes, Connection::PARAM_STR_ARRAY)
                 )
             );
+
+        if(!empty($contentTypeIds)){
+            $query->innerJoin('a', 'ezcontentclass_attribute', 'ca', $query->expr()->eq('a.contentclassattribute_id', 'ca.id'));
+            $where = $query->andWhere(
+                $query->expr()->in(
+                    'ca.contentclass_id',
+                    ':contentclassids'
+                )
+            );
+            $query->setParameter(':contentclassids', $contentTypeIds, Connection::PARAM_INT_ARRAY);
+        }
 
         if ($contentId !== null) {
             $query->andWhere(
@@ -140,7 +175,7 @@ class ContentModelGateway
      * @param int $limit
      * @return \Doctrine\DBAL\Driver\Statement|int
      */
-    public function getFieldRows($datatypes, $contentId, $offset, $limit)
+    public function getFieldRows($datatypes, $contentId, array $contentTypeIds, $offset, $limit)
     {
         if (!\is_array($datatypes)) {
             $datatypes = [$datatypes];
@@ -156,6 +191,17 @@ class ContentModelGateway
                 )
             )
             ->orderBy('a.id');
+
+        if(!empty($contentTypeIds)){
+            $query->innerJoin('a', 'ezcontentclass_attribute', 'ca', $query->expr()->eq('a.contentclassattribute_id', 'ca.id'));
+            $where = $query->andWhere(
+                $query->expr()->in(
+                    'ca.contentclass_id',
+                    ':contentclassids'
+                )
+            );
+            $query->setParameter(':contentclassids', $contentTypeIds, Connection::PARAM_INT_ARRAY);
+        }
 
         if ($contentId === null) {
             $query->setFirstResult($offset)
